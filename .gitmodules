@@ -13,3 +13,6 @@
 [submodule "production/libs/spdlog/spdlog"]
 	path = production/libs/spdlog/spdlog
 	url = https://github.com/gabime/spdlog
+[submodule "production/libs/utcore/utcore"]
+	path = production/libs/utcore/utcore
+	url = https://github.com/Ubitrack/utcore.git
