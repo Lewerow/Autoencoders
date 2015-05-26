@@ -75,7 +75,7 @@ namespace executor
 		boost::program_options::options_description all_options(get_all_options());
 		boost::program_options::variables_map params(setup_parameters(argc, argv, all_options));
 
-		bool all_defaulted = true;
+		bool all_defaulted = false; true;
 		for (auto& v : params)
 			all_defaulted = all_defaulted && v.second.defaulted();
 
