@@ -1,6 +1,9 @@
 #ifndef APPLICATION_H_JFEWUINDVJKNfuifnewufjiwefjoiwekdsmfkjnedgivnerigovrefefdwedwecvdfgvrthbtynbtynytythbythyt
 #define APPLICATION_H_JFEWUINDVJKNfuifnewufjiwefjoiwekdsmfkjnedgivnerigovrefefdwedwecvdfgvrthbtynbtynytythbythyt
 
+#include <string>
+#include <vector>
+
 namespace executor
 {
 	class application
@@ -14,6 +17,22 @@ namespace executor
 	{
 	public:
 		int run();
+
+        double dropout;
+        unsigned int train_instances;
+        unsigned int test_instances;
+        std::string output_path;
+        std::string train_data_out;
+        std::string test_data_out;
+        std::vector<std::size_t> configuration;
+
+        unsigned int print_at;
+        unsigned int max_iterations;
+        unsigned int restart_gradient_after;
+        double acceptable_error_rate;
+        double learning_coefficient;
+        double regularization_factor;
+        unsigned int batches_at_supervised;
 	};
 }
 

@@ -7,14 +7,33 @@
 #include <limits>
 #include <functional>
 #include <numeric>
+#include <map>
+#include <fstream>
+#include <thread>
 
 #include <boost/numeric/ublas/matrix.hpp>
 #include <boost/numeric/ublas/vector.hpp>
+#include <boost/lexical_cast.hpp>
 
 using namespace boost::numeric;
 
 namespace
 {
+	typedef std::size_t ClassId;
+	struct ClassResults
+	{
+		unsigned int truePositives;
+		unsigned int falsePositives;
+		unsigned int falseNegatives;
+	};
+
+	struct Metrics
+	{
+		double recall;
+		double precision;
+		double fmeasure;
+	};
+
 	double activation(double x)
 	{
 		return 1.0 / (1.0 + std::exp(-x));
@@ -26,6 +45,25 @@ namespace
 		return f * (1 - f) * x;
 	}
 
+	double sum_diagonal(const ublas::matrix<double>& w)
+	{
+		assert(w.size1() == w.size2());
+
+		double acc = 0;
+		for (std::size_t i = 0; i < w.size1(); ++i)
+			acc += const_cast<ublas::matrix<double>& >(w).at_element(i, i);
+
+		return acc;
+	}
+
+	void regularize(ublas::matrix<double>& weights, double regularization_factor)
+	{
+		double sum = sum_diagonal(ublas::prod(ublas::trans(weights), weights));
+
+		if (sum > regularization_factor * weights.size1() * weights.size2())
+			weights *= ((regularization_factor * weights.size1() * weights.size2()) / sum);
+	}
+
 	ublas::vector<double> absolutes(ublas::vector<double>&& vec)
 	{
 		for (auto& v : vec)
@@ -33,23 +71,41 @@ namespace
 
 		return vec;
 	}
-	ublas::vector<double> step_forward(const ublas::vector<double>& input, const ublas::matrix<double>& used_weights)
+	ublas::vector<double> step_forward(ublas::vector<double> input, const ublas::matrix<double>& used_weights, double dropout)
 	{
+		std::random_device dev;
+		std::uniform_real_distribution<double> reals(0, 0.5);
+		for (auto& i : input)
+		{
+			if (reals(dev) < dropout)
+				i = 0;
+		}
+
 		ublas::vector<double> activations(used_weights.size2());
 		ublas::vector<double> signals = ublas::prod(input, used_weights);
 		std::transform(signals.begin(), signals.end(), activations.begin(), activation);
 
+		activations[activations.size() - 1] = 1;
 		return activations;
 	}
 
 	ublas::vector<double> step_back(const ublas::vector<double>& forward_activations, const ublas::matrix<double>& used_weights,
-		const ublas::vector<double>& backpropagation_vector)
+		const ublas::vector<double>& backpropagation_vector, double dropout)
 	{
 		ublas::vector<double> backprop_result(used_weights.size1());
 		ublas::vector<double> signals = ublas::prod(used_weights, backpropagation_vector);
 
+		std::random_device dev;
+		std::uniform_real_distribution<double> reals(0, 1);
 		for (std::size_t i = 0; i < backprop_result.size(); ++i)
-			backprop_result[i] = backprop_activation(signals[i], forward_activations[i]);
+		{
+			if (reals(dev) < dropout)
+				backprop_result[i] = 0;
+			else
+				backprop_result[i] = backprop_activation(signals[i], forward_activations[i]);
+		}
+
+		backprop_result[backprop_result.size() - 1] = 1;
 
 		return backprop_result;
 	}
@@ -57,11 +113,20 @@ namespace
 	class Network
 	{
 	public:
-		Network(std::vector<std::size_t>&& layer_sizes) 
+		Network(std::vector<std::size_t>&& layer_sizes, double drop_out, std::ostream& out_, unsigned int print_at_, unsigned int iterations_,
+            unsigned int restart_gradient_, unsigned int batches_, double epsilon_, double coeff_, double regularize_) : dropout(drop_out), out(out_)
 		{
 			assert(layer_sizes.size() > 1);
 			for (std::size_t i = 1; i < layer_sizes.size(); ++i)
-				weights.push_back(initialize_layer(layer_sizes[i], layer_sizes[i - 1]));
+				weights.push_back(initialize_layer(layer_sizes[i] + 1, layer_sizes[i - 1] + 1));
+
+            print_at = print_at_;
+            iterations = iterations_;
+            restart_gradient = restart_gradient_;
+            batches_at_supervised = batches_;
+            error_epsilon = epsilon_;
+            learning_coefficient = coeff_;
+            regularization_factor = regularize_;
 		}
 
 		Network& operator=(Network&) = delete;
@@ -80,39 +145,59 @@ namespace
 			return matrix;
 		}
 
-		ublas::vector<double> feed_forward(const ublas::vector<double>& input)
+		ublas::vector<double> feed_forward(const ublas::vector<double>& input, double dropout)
 		{
-			return feed_forward_weights(input, weights);
+			return feed_forward_weights(input, weights, dropout);
 		}
 
-		ublas::vector<double> feed_forward_weights(const ublas::vector<double>& input, const std::vector<ublas::matrix<double> >& used_weights)
+		ublas::vector<double> feed_forward_weights(const ublas::vector<double>& input, const std::vector<ublas::matrix<double> >& used_weights, double dropout)
 		{
-			ublas::vector<double> intermediate = input;
-			for (std::size_t i = 0; i < used_weights.size(); ++i)
-				intermediate = step_forward(intermediate, used_weights[i]);
+			ublas::vector<double> intermediate = step_forward(input, used_weights[0], 0);
+			for (std::size_t i = 1; i < used_weights.size(); ++i)
+				intermediate = step_forward(intermediate, used_weights[i], dropout);
 
 			return intermediate;
 		}
 
 		void train_layer_wise(const std::vector<ublas::vector<double> >& inputs, const std::vector<ublas::vector<double> >& outputs)
 		{
-			std::cout << "Starting unsupervised training" << std::endl;
-			unsupervised_train(inputs);
-			std::cout << "Starting supervised training" << std::endl;
-			weights = supervised_train(inputs, outputs, weights);
+            out << "Starting unsupervised training" << std::endl;
+            std::cout << "Starting unsupervised training" << std::endl;
+            unsupervised_train(inputs);
+
+			out << "Starting supervised training" << std::endl;
+            std::cout << "Starting supervised training" << std::endl;
+			for (std::size_t i = 0; i < batches_at_supervised; ++i)
+			{
+                std::cout << "Starting supervised training, batch: " << i << std::endl;
+                std::vector<ublas::vector<double> > ins(inputs.begin() + i * inputs.size() / batches_at_supervised, inputs.begin() + (i + 1) * inputs.size() / batches_at_supervised);
+				std::vector<ublas::vector<double> > outs(outputs.begin() + i * outputs.size() / batches_at_supervised, outputs.begin() + (i + 1) * outputs.size() / batches_at_supervised);
+
+				weights = supervised_train(ins, outs, weights, 0.0);
+
+			}
 		}
 
 		void unsupervised_train(const std::vector<ublas::vector<double> >& labelless_training_data)
 		{
-			std::vector<std::vector<ublas::vector<double> > > layer_inputs;
+            out << "Unsupervised: Layer 1" << std::endl;
+            std::cout << "Unsupervised: Layer 1" << std::endl;
+            std::vector<std::vector<ublas::vector<double> > > layer_inputs;
 			layer_inputs.push_back(labelless_training_data);
 
-			for (std::size_t i = 0; i < weights.size() - 1; ++i)
+			weights[0] = adapt_layer(0, layer_inputs[0]) * (1 - dropout);
+			std::vector<ublas::vector<double> > layer_results(layer_inputs[0].size());
+			std::transform(layer_inputs[0].begin(), layer_inputs[0].end(), layer_results.begin(), std::bind(step_forward, std::placeholders::_1, weights[0], 0.0));
+			layer_inputs.push_back(std::move(layer_results));
+
+			for (std::size_t i = 1; i < weights.size() - 1; ++i)
 			{
-				weights[i] = adapt_layer(i, layer_inputs[i]);
+				out << "Layer " << i + 1 << std::endl;
+                std::cout << "Unsupervised: Layer " << i + 1 << std::endl;
+                weights[i] = adapt_layer(i, layer_inputs[i]) * (1 - dropout);
 
 				std::vector<ublas::vector<double> > layer_results(layer_inputs[i].size());
-				std::transform(layer_inputs[i].begin(), layer_inputs[i].end(), layer_results.begin(), std::bind(step_forward, std::placeholders::_1, weights[i]));
+				std::transform(layer_inputs[i].begin(), layer_inputs[i].end(), layer_results.begin(), std::bind(step_forward, std::placeholders::_1, weights[i], 0.0));
 				layer_inputs.push_back(std::move(layer_results));
 			}
 		}
@@ -124,104 +209,129 @@ namespace
 			std::vector<ublas::matrix<double> >  fake_weights;
 			fake_weights.push_back(weights[layerNumber]);
 			fake_weights.push_back(initialize_layer(inputs[0].size(), weights[layerNumber].size2()));
-			return supervised_train(inputs, inputs, fake_weights)[0];
+			return supervised_train(inputs, inputs, fake_weights, dropout)[0];
 		}
 		
 		std::vector<ublas::matrix<double> > supervised_train(const std::vector<ublas::vector<double> >& inputs,
 			const std::vector<ublas::vector<double> >& outputs, 
-			const std::vector<ublas::matrix<double> >& weights)
+			const std::vector<ublas::matrix<double> >& weights, double dropout)
 		{
 			assert(inputs.size() == outputs.size());
 			std::vector<ublas::matrix<double> > adapted_weights = weights;
 
-			for (unsigned int iteration = 0; iteration < iterations; ++iteration)
-			{
-				adapted_weights = conjugate_gradient_training(inputs, outputs, adapted_weights);			
-				std::cout << "Average error rate: " << average_error(inputs, outputs, adapted_weights) << std::endl;
-				if (average_error(inputs, outputs, adapted_weights) < error_epsilon)
-					break;
-			}
+			adapted_weights = conjugate_gradient_training(inputs, outputs, adapted_weights, iterations, dropout);			
+			out << "Average error rate: " << average_error(inputs, outputs, adapted_weights, dropout) << std::endl;
 
 			return adapted_weights;
 		}
 
-		std::vector<ublas::matrix<double> > calculate_gradient(const ublas::vector<double>& input,
-			const ublas::vector<double>& output,
-			const std::vector<ublas::matrix<double> >& weights)
+		std::vector<ublas::matrix<double> > calculate_gradient(const std::vector<ublas::vector<double> >& inputs,
+			const std::vector<ublas::vector<double> >& outputs,
+			const std::vector<ublas::matrix<double> >& weights,
+			double dropout)
 		{
-			auto difference = feed_forward_weights(input, weights) - output;
-
-			std::vector<ublas::vector<double> > activations = { input };
-			for (std::size_t i = 0; i < weights.size(); ++i)
-				activations.push_back(step_forward(activations[i], weights[i]));
-
-			std::vector<ublas::vector<double> > backward_activations(activations.size());
-			backward_activations.back() = activations.back() - output;
-			for (std::size_t i = weights.size(); i > 0; --i)
-				backward_activations[i - 1] = step_back(activations[i - 1], weights[i - 1], backward_activations[i]);
-
 			std::vector<ublas::matrix<double> > whole_gradient;
-			for (std::size_t i = 1; i < weights.size(); ++i)
+			for (std::size_t i = 0; i < weights.size(); ++i)
+				whole_gradient.emplace_back(ublas::matrix<double>(weights[i].size1(), weights[i].size2(), 0));
+
+			for (std::size_t in = 0; in < inputs.size(); ++in)
 			{
-				whole_gradient.emplace_back(ublas::matrix<double>(weights[i - 1].size1(), weights[i - 1].size2()));
-				for (std::size_t j = 0; j < activations[i - 1].size(); ++j)
+				const ublas::vector<double>& input = inputs[in];
+				const ublas::vector<double>& output = outputs[in];
+
+				std::vector<ublas::vector<double> > activations = { input };
+				for (std::size_t i = 0; i < weights.size(); ++i)
+					activations.push_back(step_forward(activations[i], weights[i], dropout));
+
+				std::vector<ublas::vector<double> > backward_activations(activations.size());
+				backward_activations.back() = activations.back() - output;
+				for (std::size_t i = weights.size(); i > 0; --i)
+					backward_activations[i - 1] = step_back(activations[i - 1], weights[i - 1], backward_activations[i], dropout);
+
+				for (std::size_t i = 0; i < weights.size(); ++i)
 				{
-					for (std::size_t k = 0; k < backward_activations[i].size(); ++k)
+					for (std::size_t j = 0; j < activations[i].size(); ++j)
 					{
-						whole_gradient.back().at_element(j, k) = activations[i - 1][j] * backward_activations[i][k];
+						for (std::size_t k = 0; k < backward_activations[i + 1].size(); ++k)
+						{
+							whole_gradient[i].at_element(j, k) += activations[i][j] * backward_activations[i + 1][k];
+						}
 					}
 				}
 			}
+
+			for (auto& g : whole_gradient)
+				g /= inputs.size();
 
 			return whole_gradient;
 		}
 
 		std::vector<ublas::matrix<double> > conjugate_gradient_training(const std::vector<ublas::vector<double> >& inputs,
 			const std::vector<ublas::vector<double> >& outputs,
-			std::vector<ublas::matrix<double> > weights)
+			std::vector<ublas::matrix<double> > weights, unsigned int iterations, double dropout)
 		{
 
 			std::vector<ublas::matrix<double> > previous_gradient(weights.size());
 			for (std::size_t i = 0; i < weights.size(); ++i)
 				previous_gradient[i] = ublas::matrix<double>(weights[i].size1(), weights[i].size2(), 0);
 
-			std::size_t gradient_iterations = 0;
-			for (std::size_t i = 0; i < inputs.size(); ++i)
+			double previous_error = std::numeric_limits<double>::max();
+			double current_error = 0;
+			double current_learning_coefficient = learning_coefficient;
+			for (unsigned int iteration = 0; iteration < iterations; ++iteration)
 			{
-				auto gradient = calculate_gradient(inputs[i], outputs[i], weights);
+				current_error = average_error(inputs, outputs, weights, dropout);
+				if (current_error < error_epsilon)
+					break;
+
+                if (iteration % print_at == 0)
+                    std::cout << "At iteration: " << iteration << " current error: " << current_error << std::endl;
+
+				out << "ER:" << iteration << ";" << current_error << std::endl;				
+				out << "LC:" << iteration << ";" << current_learning_coefficient << std::endl;
+
+				auto gradient = calculate_gradient(inputs, outputs, weights, dropout);
 				std::vector<ublas::matrix<double> > direction(gradient.size());
+				for (std::size_t i = 0; i < weights.size(); ++i)
+					direction[i] = ublas::matrix<double>(weights[i].size1(), weights[i].size2(), 0);
+
 				for (std::size_t j = 0; j < gradient.size(); ++j)
 				{
-					double beta = 0.3;
-					/*if (i > 0)
-					    beta = ublas::norm_2(ublas::prod(ublas::prod(ublas::trans(gradient[j]), (gradient[j] - previous_gradient[j])), ublas::scalar_vector<double>(gradient[j].size2()))) /
-							ublas::norm_2(ublas::prod(ublas::prod(ublas::trans(previous_gradient[j]), previous_gradient[j]), ublas::scalar_vector<double>(previous_gradient[j].size2())));
-							*/
-					if (++gradient_iterations >= restart_gradient)
+					double beta = 0;
+					if (iteration % restart_gradient == 0)
 					{
 						beta = 0;
-						gradient_iterations = 0;
-						std::cout << "Restarting gradient calculation" << std::endl;
+						out << "Restarting gradient calculation" << std::endl;
 					}
-					direction[j] = gradient[j];/// +beta * beta * previous_gradient[j];
+					else
+					{
+						beta = sum_diagonal(ublas::prod(ublas::trans(gradient[j]), gradient[j] - previous_gradient[j])) /
+							sum_diagonal(ublas::prod(ublas::trans(previous_gradient[j]), previous_gradient[j]));
+					}
+
+					direction[j] = gradient[j] + beta * direction[j];
 					previous_gradient[j] = std::move(gradient[j]);
 
-					weights[j] += direction[j] * learning_coefficient;
+					regularize(direction[j], regularization_factor);
+					weights[j] -= (direction[j] * current_learning_coefficient);
+					regularize(direction[j], regularization_factor * 10);
 				}
-			}
 
+				previous_error = current_error;
+			}
 			return weights;
 		}
 
 		ublas::vector<double> test_weights(const std::vector<ublas::vector<double> >& inputs,
 			const std::vector<ublas::vector<double> >& outputs,
-			const std::vector<ublas::matrix<double> >& weights)
+			const std::vector<ublas::matrix<double> >& weights,
+			double dropout)
 		{
 			assert(inputs.size() == outputs.size());
 			ublas::vector<double> errors(weights.back().size2(), 0);
 			for (std::size_t i = 0; i < inputs.size(); ++i)
 			{
-				auto out = feed_forward_weights(inputs[i], weights);
+				auto out = feed_forward_weights(inputs[i], weights, dropout);
 				errors += absolutes(out - outputs[i]);
 			}
 
@@ -230,51 +340,116 @@ namespace
 
 		double average_error(const std::vector<ublas::vector<double> >& inputs,
 			const std::vector<ublas::vector<double> >& outputs,
-			const std::vector<ublas::matrix<double> >& weights)
+			const std::vector<ublas::matrix<double> >& weights,
+			double dropout)
 		{
 			assert(inputs.size() == outputs.size());
 			assert(inputs.size() > 0); 
 
-			auto errors = test_weights(inputs, outputs, weights);
+			auto errors = test_weights(inputs, outputs, weights, dropout);
 			return ublas::sum(errors) / errors.size();
+		}
+
+		std::vector<ClassId> classify(const std::vector<ublas::vector<double> >& inputs, const std::vector<ublas::matrix<double> >& weights)
+		{
+			std::vector<ClassId> results;
+			results.reserve(inputs.size());
+			for (std::size_t i = 0; i < inputs.size(); ++i)
+			{
+				auto out = feed_forward_weights(inputs[i], weights, 0.0);
+				results.push_back(std::distance(out.begin(), std::max_element(out.begin(), out.end() - 1)));
+			}
+
+			return results;
 		}
 
 		void test(const std::vector<ublas::vector<double> >& inputs, const std::vector<ublas::vector<double> >& outputs)
 		{
-			std::cout << "Average error rate: " << average_error(inputs, outputs, weights) << std::endl;
+			out << "Average error rate: " << average_error(inputs, outputs, weights, 0.0) << std::endl;
 		}
 
-		static std::unique_ptr<Network> configure(std::vector<std::size_t>&& layer_sizes)
+		void report_classification_from_outputs(const std::vector<ublas::vector<double> >& inputs, const std::vector<ublas::vector<double> >& outputs, const std::vector<ublas::matrix<double> >& weights)
 		{
-			return std::make_unique<Network>(std::move(layer_sizes));
+			std::vector<ClassId> classes;
+			classes.resize(outputs.size());
+			std::transform(outputs.begin(), outputs.end(), classes.begin(), [](const ublas::vector<double>& outs) {return std::distance(outs.begin(), std::max_element(outs.begin(), outs.end() - 1)); });
+
+			report_classification(inputs, classes, weights);
 		}
 
-	private:
+		void report_classification(const std::vector<ublas::vector<double> >& inputs, const std::vector<ClassId>& corrects, const std::vector<ublas::matrix<double> >& weights)
+		{
+			std::map<ClassId, ClassResults> results;
+			auto classifications = classify(inputs, weights);
+			assert(classifications.size() == corrects.size());
+
+			for (std::size_t i = 0; i < corrects.size(); ++i)
+			{
+				if (corrects[i] != classifications[i])
+				{
+					++results[classifications[i]].falsePositives;
+					++results[corrects[i]].falseNegatives;
+				}
+				else
+					++results[corrects[i]].truePositives;
+			}
+
+			std::vector<Metrics> metrics;
+			metrics.resize(results.size());
+			std::transform(results.begin(), results.end(), metrics.begin(), [](const std::pair<ClassId, ClassResults>& res){
+				Metrics m;
+				m.precision = (res.second.truePositives + res.second.falsePositives) > 0 ? (res.second.truePositives) / double(res.second.truePositives + res.second.falsePositives) : 0;
+				m.recall = (res.second.truePositives + res.second.falseNegatives) > 0 ? (res.second.truePositives) / double(res.second.truePositives + res.second.falseNegatives) : 0;
+				m.fmeasure = (m.precision + m.recall) > 0 ? 2 * (m.precision * m.recall) / (m.precision + m.recall) : 0;
+				return m;
+			});
+			
+			if (metrics.size() > 0)
+			{
+                out << "Average precision: " << std::accumulate(metrics.begin(), metrics.end(), 0.0, [](double acc, Metrics m){return acc + m.precision; }) / metrics.size() << std::endl;
+                out << "Average recall: " << std::accumulate(metrics.begin(), metrics.end(), 0.0, [](double acc, Metrics m){return acc + m.recall; }) / metrics.size() << std::endl;
+                out << "Average F-measure: " << std::accumulate(metrics.begin(), metrics.end(), 0.0, [](double acc, Metrics m){return acc + m.fmeasure; }) / metrics.size() << std::endl;
+                std::cout << "Average precision: " << std::accumulate(metrics.begin(), metrics.end(), 0.0, [](double acc, Metrics m){return acc + m.precision; }) / metrics.size() << std::endl;
+                std::cout << "Average recall: " << std::accumulate(metrics.begin(), metrics.end(), 0.0, [](double acc, Metrics m){return acc + m.recall; }) / metrics.size() << std::endl;
+                std::cout << "Average F-measure: " << std::accumulate(metrics.begin(), metrics.end(), 0.0, [](double acc, Metrics m){return acc + m.fmeasure; }) / metrics.size() << std::endl;
+            }
+			else
+			{
+                out << "No metrics!" << std::endl;
+                std::cout << "No metrics!" << std::endl;
+            }
+		}
+
 		std::vector<ublas::matrix<double> >  weights;
-		const unsigned int iterations = 1000;
-		const unsigned int restart_gradient = 5000;
-		const unsigned int max_batch_size = 100;
-		const double error_epsilon = 0.1;
-		const double learning_coefficient = 0.7;
+        unsigned int print_at;
+		unsigned int iterations;
+		unsigned int restart_gradient;
+        unsigned int batches_at_supervised;
+		double error_epsilon;
+		double learning_coefficient;
+		double regularization_factor;
+		double dropout;
+		std::ostream& out;
 	};
 
 
 
-	std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vector<double> > > generate_linear()
+	std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vector<double> > > generate_linear(std::size_t amount)
 	{
 		std::random_device rand;
 		std::mt19937 mt(rand());
 		std::uniform_real_distribution<double> reals(0.1, 0.9);
 		std::vector<ublas::vector<double> > ins;
 		std::vector<ublas::vector<double> > outs;
-		for (std::size_t i = 0; i < 500; ++i)
+		for (std::size_t i = 0; i < amount; ++i)
 		{
 			double a = reals(mt);
 			double b = reals(mt);
-			ublas::vector<double> in = ublas::vector<double>(2);
+			ublas::vector<double> in = ublas::vector<double>(3);
 			in[0] = a;
 			in[1] = b;
-			ublas::vector<double> out = ublas::vector<double>(2);
+			in[2] = 1;
+			ublas::vector<double> out = ublas::vector<double>(3);
 
 			if (a > b)
 			{
@@ -286,6 +461,8 @@ namespace
 				out[1] = 0.9;
 				out[0] = 0.1;
 			}
+
+			out[2] = 1;
 			ins.push_back(in);
 			outs.push_back(out);
 		}
@@ -294,19 +471,49 @@ namespace
 	}
 }
 
+void dump(std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vector<double> > >& data, std::string path)
+{
+    auto& in = data.first;
+    auto& out = data.second;
+    assert(in.size() == out.size());
+
+    std::ofstream outf(path);
+
+    for (std::size_t i = 0; i < in.size(); ++i)
+    {
+        for (auto j = in[i].begin(); j < in[i].end(); ++j)
+            outf << (*j) << ";";
+
+        for (auto j = out[i].begin(); j < out[i].end(); ++j)
+            outf << (*j) << ";";
+
+        outf << std::endl;
+    }
+    
+    std::cout << "Dumped data to " << path <<std::endl;
+}
+
 namespace executor
 {
 	int whole_application::run()
 	{
+		auto train_data = generate_linear(train_instances);
+        if (!train_data_out.empty())
+            dump(train_data, train_data_out);
 
-		auto network = Network::configure({ 2, 15, 2 });
+		auto test_data = generate_linear(test_instances);
+        if (!test_data_out.empty())
+            dump(test_data, test_data_out);
 
-		auto data = generate_linear();
+		std::ofstream stream(output_path);
+        auto network = std::make_unique<Network>(std::move(configuration), dropout, stream, print_at, max_iterations, restart_gradient_after, batches_at_supervised, acceptable_error_rate,
+            learning_coefficient, regularization_factor);
 
-		network->test(data.first, data.second);
-		network->train_layer_wise(data.first, data.second);
-		network->test(data.first, data.second);
-	
+		network->test(test_data.first, test_data.second);
+		network->train_layer_wise(train_data.first, train_data.second);
+		network->test(test_data.first, test_data.second);
+		network->report_classification_from_outputs(test_data.first, test_data.second, network->weights);
+
 		return 0;
 	}
 }

@@ -33,8 +33,8 @@ namespace
 		}
 		catch (boost::exception_detail::clone_impl<boost::exception_detail::error_info_injector<boost::program_options::reading_file> > ex)
 		{
-			std::cerr << "Error while reading configuration from file: " << ex.what() << ".";
-			std::cerr << "Proceeding with startup";
+			std::cerr << "Error while reading configuration from file: " << ex.what() << ". ";
+			std::cerr << "Proceeding with startup" << std::endl;
 		}
 
 		return vars;
@@ -83,8 +83,18 @@ namespace executor
 			std::cout << all_options;
 		else if (params.count("version"))
 			std::cout << APPLICATION_NAME << " v." << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_SUBMINOR << std::endl;
-		else
-			return configurator(params).get_application().run();
+        else
+        {
+            try
+            {
+                return configurator(params).get_application().run();
+            }
+            catch (std::exception& ex)
+            {
+                std::cerr << "Fatal exception occurred during execution: " << ex.what() << std::endl;
+            }
+
+        }
 
         return 0;
     }

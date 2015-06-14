@@ -9,11 +9,21 @@ namespace executor
 		desc.add_options()
 			("help,h", "Print this message and exit")
 			("version,v", "Print version descriptor and exit")
-			("input,i", boost::program_options::value<std::string>()->value_name("INPUT"), "Location of input file")
-			("output,o", boost::program_options::value<std::string>()->value_name("OUT")->default_value("out.stp"), "Location of output file")
-			("working_directory", boost::program_options::value<std::string>()->value_name("WORKSPACE")->default_value("temp"), "Directory solely dedicated for keeping temporary files")
+			("output,o", boost::program_options::value<std::string>()->value_name("OUT")->default_value("out.txt"), "Location of output log file")
 		    ("config_file", boost::program_options::value<std::string>()->value_name("BASIC_CONFIG")->default_value("config.ini"), "Path to file containing basic configuration options")
-			;
+            ("train_instances_per_class", boost::program_options::value<unsigned int>()->default_value(500), "Number of training instances per class")
+            ("test_instances_per_class", boost::program_options::value<unsigned int>()->default_value(100), "Number of test instances per class")
+            ("dropout", boost::program_options::value<double>()->default_value(0.0), "Value of drop-out autoencoder parameter")
+            ("train_data_out", boost::program_options::value<std::string>()->default_value(""), "Location for training data dump")
+            ("test_data_out", boost::program_options::value<std::string>()->default_value(""), "Location for test data dump")
+            ("max_iterations", boost::program_options::value<unsigned int>()->default_value(500), "Maximum allowed number of iterations during each phase of teaching (iterations per layer)")
+            ("restart_gradient_after", boost::program_options::value<unsigned int>()->default_value(200), "After how many iterations conjugate gradient algorithm shall be restarted?")
+            ("epsilon", boost::program_options::value<double>()->default_value(0.01), "Error rate which - if reached - causes current training phase to short-circuit")
+            ("learning_coefficient", boost::program_options::value<double>()->default_value(0.5), "Learning coefficient for backpropagation algorithm")
+            ("regularization_factor", boost::program_options::value<double>()->default_value(0.1), "Value of regularization factor, as described in report")
+            ("print_at", boost::program_options::value<unsigned int>()->default_value(30), "After how many iterations print current status to stdout? (Each iteration is printed to given log)")
+            ("batches_at_supervised", boost::program_options::value<unsigned int>()->default_value(5), "How many batches shall be used for supervised finetuning?")
+            ("configuration", boost::program_options::value<std::string>()->default_value("15,20"), "Comma-separated counts of neurons in hidden layers. Network always have two inputs and two outputs");
 
 		return desc;
 	}
