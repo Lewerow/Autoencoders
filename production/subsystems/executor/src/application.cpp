@@ -459,7 +459,7 @@ namespace
 			in[inputs] = 1;
 			ins.push_back(in);
 
-			ublas::vector<double> out(outputs + 1);
+			ublas::vector<double> out(outputs);
 			for (std::size_t i = 0; i < outputs; ++i)
 			{
 				file >> d >> c;
@@ -468,7 +468,6 @@ namespace
 
 				out[i] = d;
 			}
-			out[outputs] = 1;
 			outs.push_back(out);
 				
 			if (std::isdigit(c))
