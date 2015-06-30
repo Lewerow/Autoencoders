@@ -9,6 +9,14 @@ FUNCTION(ADD_DEPENDENCY_TO_BOOST VERSION)
         MESSAGE(WARNING "Using Boost ${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION} - application is not tested with ${VERSION}, so keep cautious!")
     ENDIF(NOT ("${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}" STREQUAL ${VERSION}))
 
+	IF("${CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
+	    SET(Boost_USE_DEBUG_RUNTIME ON)
+	ELSE()
+	    SET(Boost_USE_DEBUG_RUNTIME OFF)
+	ENDIF("${CMAKE_BUILD_TYPE}" STREQUAL "DEBUG")
+	
+	
+	
     MESSAGE(STATUS "Using Boost version: ${Boost_MAJOR_VERSION}.${Boost_MINOR_VERSION}.${Boost_SUBMINOR_VERSION}")
     MESSAGE(STATUS "Using Boost libraries: ${Boost_LIBRARIES}")
     MESSAGE(STATUS "Using Boost libraries from: ${Boost_LIBRARY_DIRS}")

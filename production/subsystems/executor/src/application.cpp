@@ -11,6 +11,7 @@
 #include <fstream>
 #include <thread>
 
+#include <boost/tokenizer.hpp>
 #include <boost/numeric/ublas/matrix.hpp>
 #include <boost/numeric/ublas/vector.hpp>
 #include <boost/lexical_cast.hpp>
@@ -432,37 +433,89 @@ namespace
 		std::ostream& out;
 	};
 
-
-
-	std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vector<double> > > generate_linear(std::size_t amount)
+	std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vector<double> > > load_data(std::size_t inputs, std::size_t outputs, const std::string& path)
 	{
+		std::fstream file(path.c_str(), std::ios_base::in);
+		if (!file.is_open())
+			throw std::runtime_error("Cannot open input file: " + path);
+
+		std::vector<ublas::vector<double> > ins;
+		std::vector<ublas::vector<double> > outs;
+
+		while (!file.eof())
+		{
+			char c;
+			double d;
+
+			ublas::vector<double> in(inputs + 1);
+			for (std::size_t i = 0; i < inputs; ++i)
+			{
+				file >> d >> c;
+				if (c != ',')
+					throw std::runtime_error("Invalid input file");
+
+				in[i] = d;
+			}
+			in[inputs] = 1;
+			ins.push_back(in);
+
+			ublas::vector<double> out(outputs + 1);
+			for (std::size_t i = 0; i < outputs; ++i)
+			{
+				file >> d >> c;
+				if (c != ',' && (c != '\n' && c != '\r' && i < outputs - 1))
+					throw std::runtime_error("Invalid input file");
+
+				out[i] = d;
+			}
+			out[outputs] = 1;
+			outs.push_back(out);
+				
+			if (std::isdigit(c))
+				file.putback(c);
+			while (!std::isdigit(file.peek()) && file.good())
+				file.get(c);
+		}
+
+		return std::make_pair(ins, outs);
+	}
+
+	std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vector<double> > > generate_linear(std::size_t inputs, std::size_t outputs, std::size_t amount)
+	{
+		const double min = 0.1;
+		const double max = 0.9;
 		std::random_device rand;
 		std::mt19937 mt(rand());
-		std::uniform_real_distribution<double> reals(0.1, 0.9);
+		std::uniform_real_distribution<double> reals(min, max);
 		std::vector<ublas::vector<double> > ins;
 		std::vector<ublas::vector<double> > outs;
 		for (std::size_t i = 0; i < amount; ++i)
 		{
 			double a = reals(mt);
 			double b = reals(mt);
-			ublas::vector<double> in = ublas::vector<double>(3);
-			in[0] = a;
-			in[1] = b;
-			in[2] = 1;
-			ublas::vector<double> out = ublas::vector<double>(3);
+			ublas::vector<double> in = ublas::vector<double>(inputs);
 
-			if (a > b)
+			double avg = 0;
+			for (std::size_t j = 0; j < inputs; ++j) 
 			{
-				out[0] = 0.9;
-				out[1] = 0.1;
-			}
-			else
-			{
-				out[1] = 0.9;
-				out[0] = 0.1;
+				double z = reals(mt);
+				avg += z;
+				in[j] = z;
 			}
 
-			out[2] = 1;
+			avg /= inputs;
+
+			ublas::vector<double> out = ublas::vector<double>(outputs);
+			double diff = (max - min) / outputs;
+			for (int j = 0; j < outputs; ++j) 
+			{
+				double desc = avg - (min + diff * j);
+				if (desc > 0 && desc < diff)
+					out[j] = max;
+				else
+					out[j] = min;
+			}
+				
 			ins.push_back(in);
 			outs.push_back(out);
 		}
@@ -477,15 +530,19 @@ void dump(std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vect
     auto& out = data.second;
     assert(in.size() == out.size());
 
-    std::ofstream outf(path);
+    std::ofstream outf(path, std::ios_base::trunc);
+	if (!outf.is_open())
+		throw std::runtime_error("Cannot open file for writing: " + path);
 
     for (std::size_t i = 0; i < in.size(); ++i)
     {
-        for (auto j = in[i].begin(); j < in[i].end(); ++j)
-            outf << (*j) << ";";
+		auto j = in[i].begin();
+		outf << (*j);
+        for (++j; j < in[i].end(); ++j)
+            outf << "," << (*j);
 
-        for (auto j = out[i].begin(); j < out[i].end(); ++j)
-            outf << (*j) << ";";
+		for (auto k = out[i].begin(); k < out[i].end(); ++k)
+            outf << "," << (*k);
 
         outf << std::endl;
     }
@@ -497,22 +554,27 @@ namespace executor
 {
 	int whole_application::run()
 	{
-		auto train_data = generate_linear(train_instances);
-        if (!train_data_out.empty())
-            dump(train_data, train_data_out);
+		if (generate)
+		{
+			auto train_data = generate_linear(inputs, outputs, train_instances);
+			dump(train_data, train_data_path);
 
-		auto test_data = generate_linear(test_instances);
-        if (!test_data_out.empty())
-            dump(test_data, test_data_out);
+			auto test_data = generate_linear(inputs, outputs, test_instances);
+			dump(test_data, test_data_path);
+		}
+
+		auto train_data = load_data(inputs, outputs, train_data_path);
+		auto test_data = load_data(inputs, outputs, test_data_path);
 
 		std::ofstream stream(output_path);
-        auto network = std::make_unique<Network>(std::move(configuration), dropout, stream, print_at, max_iterations, restart_gradient_after, batches_at_supervised, acceptable_error_rate,
-            learning_coefficient, regularization_factor);
+		auto network = std::make_unique<Network>(std::move(configuration), dropout, stream, print_at, max_iterations, restart_gradient_after, batches_at_supervised, acceptable_error_rate,
+			learning_coefficient, regularization_factor);
 
 		network->test(test_data.first, test_data.second);
 		network->train_layer_wise(train_data.first, train_data.second);
 		network->test(test_data.first, test_data.second);
 		network->report_classification_from_outputs(test_data.first, test_data.second, network->weights);
+		
 
 		return 0;
 	}

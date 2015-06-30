@@ -36,6 +36,7 @@ namespace
 			std::cerr << "Error while reading configuration from file: " << ex.what() << ". ";
 			std::cerr << "Proceeding with startup" << std::endl;
 		}
+		boost::program_options::notify(vars);
 
 		return vars;
 	}
@@ -65,6 +66,12 @@ namespace
 			std::cerr << "Terminating";
 			exit(3);
 		}
+		catch (boost::program_options::required_option& ex)
+		{
+			std::cerr << "Fatal error: " << ex.what() << std::endl;
+			std::cerr << "Terminating";
+			exit(4);
+		}
 	}
 }
 
@@ -92,7 +99,13 @@ namespace executor
             catch (std::exception& ex)
             {
                 std::cerr << "Fatal exception occurred during execution: " << ex.what() << std::endl;
+				return 100;
             }
+			catch (...)
+			{
+				std::cerr << "Unknown critical runtime problem occurred" << std::endl;
+				return 101;
+			}
 
         }
 

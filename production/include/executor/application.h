@@ -22,8 +22,8 @@ namespace executor
         unsigned int train_instances;
         unsigned int test_instances;
         std::string output_path;
-        std::string train_data_out;
-        std::string test_data_out;
+        std::string train_data_path;
+        std::string test_data_path;
         std::vector<std::size_t> configuration;
 
         unsigned int print_at;
@@ -33,6 +33,10 @@ namespace executor
         double learning_coefficient;
         double regularization_factor;
         unsigned int batches_at_supervised;
+
+		unsigned int inputs;
+		unsigned int outputs;
+		bool generate;
 	};
 }
 

@@ -32,8 +32,11 @@ namespace executor
         app->test_instances = vars.at("test_instances_per_class").as<unsigned int>();
         app->output_path = vars.at("output").as<std::string>();
         app->dropout = vars.at("dropout").as<double>();
-        app->train_data_out = vars.at("train_data_out").as<std::string>();
-        app->test_data_out = vars.at("test_data_out").as<std::string>();
+        app->train_data_path = vars.at("train_data").as<std::string>();
+		app->test_data_path = vars.at("test_data").as<std::string>();
+		app->inputs = vars.at("inputs").as<unsigned int>();
+		app->outputs = vars.at("outputs").as<unsigned int>();
+		app->generate = vars.at("generate").as<bool>();
 
         app->max_iterations = vars.at("max_iterations").as<unsigned int>();
         app->restart_gradient_after = vars.at("restart_gradient_after").as<unsigned int>();
