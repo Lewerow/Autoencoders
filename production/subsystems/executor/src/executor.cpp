@@ -36,7 +36,6 @@ namespace
 			std::cerr << "Error while reading configuration from file: " << ex.what() << ". ";
 			std::cerr << "Proceeding with startup" << std::endl;
 		}
-		boost::program_options::notify(vars);
 
 		return vars;
 	}
@@ -66,12 +65,6 @@ namespace
 			std::cerr << "Terminating";
 			exit(3);
 		}
-		catch (boost::program_options::required_option& ex)
-		{
-			std::cerr << "Fatal error: " << ex.what() << std::endl;
-			std::cerr << "Terminating";
-			exit(4);
-		}
 	}
 }
 
@@ -82,7 +75,7 @@ namespace executor
 		boost::program_options::options_description all_options(get_all_options());
 		boost::program_options::variables_map params(setup_parameters(argc, argv, all_options));
 
-		bool all_defaulted = false; true;
+		bool all_defaulted = true;
 		for (auto& v : params)
 			all_defaulted = all_defaulted && v.second.defaulted();
 
@@ -91,16 +84,23 @@ namespace executor
 		else if (params.count("version"))
 			std::cout << APPLICATION_NAME << " v." << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_SUBMINOR << std::endl;
         else
-        {
+		{
             try
-            {
+			{
+				boost::program_options::notify(params);
                 return configurator(params).get_application().run();
-            }
+			}
+			catch (boost::program_options::required_option& ex)
+			{
+				std::cerr << "Fatal error: " << ex.what() << std::endl;
+				std::cerr << "Terminating";
+				exit(4);
+			}
             catch (std::exception& ex)
             {
                 std::cerr << "Fatal exception occurred during execution: " << ex.what() << std::endl;
 				return 100;
-            }
+			}
 			catch (...)
 			{
 				std::cerr << "Unknown critical runtime problem occurred" << std::endl;

@@ -1,68 +1,55 @@
 
-ProjectTemplate
-================
-================
-**Overview**
-================
-
-A template for starting with new C++ applications.
-
-Some example libraries are included to make your life easier and understanding of "what happens where" simpler.
-These libraries are listed below.
-
-=================
-**Installation**
+Autoencoders
 =================
 
-Just clone the repository (or even download and unpack)and template is ready.
-
 =================
-**Usage**
+**Parametry**
 =================
 
-Template uses CMake 
+--dropout - prawdopodobieństwo wyłączenia neuronu w fazie uczenia (dla 1 próbki uczącej)
+--max_iterations - maksymalna liczba iteracji na warstwę
+--restart_gradient_after - liczba iteracji po których algorytm gradientów sprzężonych jest restartowany
+--epsilon - RMS na zbiorze uczącym przy którym uczenie warstwy jest kończone
+--learning_coefficient - standardowo rozumiany współczynnik uczenia (określa rozmiar kroku)
+--regularization_factor - współczynnik skalowania wag
+--batches_at_supervised - 
+--configuration - liczby neuronów w warstwach ukrytych oddzielone przecinkami - np. 10,14,15 oznacza sieć o 3 warstwach ukrytych, mających odpowiednio 10, 14 i 15 neuronów
+--print_at - liczba iteracji co ile aktualny RMS drukowany jest na standardowe wyjście
+--generate - czy należy wygenerować zbiór uczący i testowy? Generowane zbiory są separowalne liniowo
+--inputs - liczba wejść
+--outputs - liczba wyjść
+--test_data - ścieżka do pliku z danymi testowymi (w przypadku użycia --generate plik zostanie nadpisany)
+--train_data - ścieżka do pliku z danymi testowymi (w przypadku użycia --generate plik zostanie nadpisany)
+--train_instances - liczba instancji w zbiorze uczącym
+--test_instances - liczba instancji w zbiorze testowym
+--config_file - ścieżka do pliku konfiguracyjnego (plik konfiguracyjny zawiera parametry w postaci <nazwa>=<wartość> oddzielone znakami nowej linii)
 
 =================
-**Dependencies**
+**Dane**
 =================
 
-Template in first version requires boost for parsing command line options and as testing framework. Right now it is not
-prepared for boostless projects, but we may consider it if a need arises. If you're interested in such feature, please
-contact development team.
+Dane wejściowe muszą być w formacie CSV oddzielonym przecinkami, bez nagłówków.
+Separatorem części ułamkowej musi być kropka.
 
 =================
-**Libraries**
+**Instalacja**
 =================
 
-There are a few libraries included so that you might get see an example of how the system was supposed to work.
-These include:
-
- * Turtle (master branch) as mocking library (only in tests)
- * Celero (master branch) as benchmarking library (only in tests)
- * ChaiScript (develop branch) as scripting language (in production code)
- * PugiXML (master branch) as, well, XML library (in production code)
- * spdlog (master branch) as logger (in production code)
- * sqlite (3.8.8.3 amalgamation) as database management library (in production code)
-
-Some or all might be included as submodules, so make sure you fetch them all before compiling
-
-There is also embedded support for some common C++ libraries:
- * Boost for general-purpose utilities
- * OpenCV for stuff related to image processing
-
-It is also planned to extend range of supported out-of-the-box libraries, mainly with:
- * Dlib for machine learning
- * VTK for 3D graphics
- * SOCI for ORM mapping
- * Crypto++ as cryptographic library
+Wspierane jest tylko budowanie ze źródeł - wymaga zainstalowanej lokalnie bilbioteki boost oraz kompilatora C++ zgodnego z C++11 co najmniej tak, jak kompilator wbudowany w MSVS2013.
+Aplikacja była testowana wyłącznie na systemie Windows, ale w razie problemów w uruchomieniu na innych systemach, proszę o kontakt.
 
 =================
-**Building**
+**Budowanie**
 =================
-
-Project uses CMake (version 2.8 is minimal supported) as its buildsystem, so it should work everywhere where CMake is supported and all required libraries are available.
-Simply invoke `cmake .` in the main directory or - in case of out-of-source (recommended) builds, invoke it from a different directory. Just like any other CMake invocation.
-
-If you wish to use provided libraries on MSVS, make sure you have installed at least MSVS 2013 Update 4, as some stuff in ChaiScript library requires it.
-
-Additionally, an experimental support for building with Premake5 is (shall be) supported. Please note that this will most likely remain experimental, as Premake5 itself is in alpha phase.
+Wymagany jest CMake i boost (program_options, ublas i unit_test_framework).
+wykonanie komend (z katalogu projektu):
+    mkdir build
+	cd build
+	cmake ..
+	#Visual
+	msbuild /m ALL_BUILD.sln
+	#GCC/Clang
+	make -j3
+	
+powinno skutkować utworzeniem katalogu /bin/exe (lub /bin/exe/Release | /bin/exe/Debug)
+mogą wystąpić problemy z kolejnością linkowania bibliotek boost - należy ją wtedy dostosować (odpowiednio do typu konfiguracji)
