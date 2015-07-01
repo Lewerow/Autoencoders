@@ -8,17 +8,17 @@
 
 namespace
 {
-    std::vector<std::size_t> configure_network(std::string textual)
+    std::vector<std::size_t> configure_network(std::string textual, std::size_t ins, std::size_t outs)
     {
         std::vector<std::string> elems;
         boost::algorithm::split(elems, textual, [](char c){return c == ',';});
 
         std::vector<std::size_t> sizes;
-        sizes.push_back(2);
+		sizes.push_back(ins);
         for (auto& a: elems)
             sizes.push_back(boost::lexical_cast<std::size_t>(a));
 
-        sizes.push_back(2);
+		sizes.push_back(outs);
         return sizes;
     }
 }
@@ -46,7 +46,7 @@ namespace executor
         app->print_at = vars.at("print_at").as<unsigned int>();
         app->batches_at_supervised = vars.at("batches_at_supervised").as<unsigned int>();
 
-        app->configuration = configure_network(vars.at("configuration").as<std::string>());
+        app->configuration = configure_network(vars.at("configuration").as<std::string>(), app->inputs, app->outputs);
 
         this->app = std::move(app);
 	}

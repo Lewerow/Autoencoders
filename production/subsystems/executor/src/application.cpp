@@ -315,7 +315,6 @@ namespace
 
 					regularize(direction[j], regularization_factor);
 					weights[j] -= (direction[j] * current_learning_coefficient);
-					regularize(direction[j], regularization_factor * 10);
 				}
 
 				previous_error = current_error;
@@ -436,7 +435,7 @@ namespace
 	std::pair<std::vector<ublas::vector<double> >, std::vector<ublas::vector<double> > > load_data(std::size_t inputs, std::size_t outputs, const std::string& path)
 	{
 		std::fstream file(path.c_str(), std::ios_base::in);
-		if (!file.is_open())
+		if (!file.is_open() || !file.good())
 			throw std::runtime_error("Cannot open input file: " + path);
 
 		std::vector<ublas::vector<double> > ins;
@@ -459,7 +458,7 @@ namespace
 			in[inputs] = 1;
 			ins.push_back(in);
 
-			ublas::vector<double> out(outputs);
+			ublas::vector<double> out(outputs + 1);
 			for (std::size_t i = 0; i < outputs; ++i)
 			{
 				file >> d >> c;
@@ -468,6 +467,7 @@ namespace
 
 				out[i] = d;
 			}
+			out[outputs] = 1;
 			outs.push_back(out);
 				
 			if (std::isdigit(c))
